@@ -1,0 +1,87 @@
+# Локальный стек. Запуск:
+#   docker compose up --build --scale backend=2
+#
+# Отличие от deploy/docker-compose.prod.yml: здесь образы СОБИРАЮТСЯ (build:),
+# на сервере — только скачиваются (image:). Значения переменных можно
+# переопределить в .env рядом с этим файлом (см. .env.example).
+
+x-logging: &default-logging
+  # Без лимита json-file растёт бесконечно, а структурированные JSON-логи пишут
+  # много: диск однажды просто закончится.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  nginx:
+    # Контекст — КОРЕНЬ проекта: nginx/Dockerfile копирует и nginx/, и static/,
+    # а COPY не видит файлов за пределами контекста.
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    # Единственная точка входа снаружи.
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      backend:
+        # nginx резолвит имя backend ОДИН раз при старте и запоминает адреса всех
+        # реплик. Стартовать раньше backend — значит упасть с "host not found"
+        # или запомнить неполный список реплик.
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # 127.0.0.1, а не localhost: в alpine localhost может резолвиться в ::1,
+      # а nginx слушает только IPv4. /nginx-health отвечает на порту 80 до редиректа.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  backend:
+    build: ./backend
+    # НЕТ container_name — с фиксированным именем --scale backend=2 невозможен
+    # (два контейнера не могут называться одинаково).
+    # НЕТ ports — backend доступен только внутри Docker-сети. Именно поэтому ему
+    # можно доверять заголовку X-Real-IP: подделать его, минуя nginx, нельзя.
+    expose:
+      - "8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MAX_FIBONACCI_N: ${MAX_FIBONACCI_N:-35}
+      # Правило ёмкости: реплики × WEB_CONCURRENCY × COMPUTE_POOL_SIZE ≈ ядра.
+      # Локально (4 ядра): 2 реплики × 2 воркера × пул 1 = 4.
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      COMPUTE_POOL_SIZE: ${COMPUTE_POOL_SIZE:-1}
+      # Очередь ожидания в воркере: "считаются + ждут" ≤ BACKPRESSURE_FACTOR × пул,
+      # ждать слот не дольше COMPUTE_QUEUE_WAIT_SECONDS, иначе 503.
+      BACKPRESSURE_FACTOR: ${BACKPRESSURE_FACTOR:-8}
+      COMPUTE_QUEUE_WAIT_SECONDS: ${COMPUTE_QUEUE_WAIT_SECONDS:-10}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # Docker шлёт SIGTERM, ждёт stop_grace_period, потом SIGKILL. Дефолтные 10 с
+    # меньше gunicorn --graceful-timeout (30 с) — воркеры не успели бы доработать.
+    stop_grace_period: 40s
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    # Порт наружу не пробрасываем: Redis без пароля доступен только backend'ам.
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
+volumes:
+  redis_data:

@@ -1,0 +1,198 @@
+# Что делает:
+#   pull request -> тесты + сборка образов (БЕЗ пуша и деплоя)
+#   push в main  -> тесты -> сборка и пуш образов в GHCR -> деплой по SSH -> smoke test
+#
+# Версии экшенов (@v4, @v5...) указаны по мажорным тегам — перед использованием
+# сверься с актуальными версиями в GitHub Marketplace.
+#
+# Структура проекта, на которую опирается файл:
+#   backend/Dockerfile, backend/requirements.txt, backend/app/, backend/tests/
+#   nginx/Dockerfile, nginx/nginx.conf, static/
+#   requirements-dev.txt
+#   deploy/docker-compose.prod.yml
+#
+# requirements*.txt — "замки": точные версии всех пакетов с хэшами, собраны
+# pip-compile из requirements*.in. Поэтому CI, образ и сервер получают ровно те
+# версии, что прошли тесты, а подменённый пакет не установится (хэш не совпадёт).
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Новый push отменяет устаревший прогон для PR, но НЕ отменяет уже идущий
+# деплой на main (прерванный посреди docker compose up деплой — плохая идея).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Тесты. На ubuntu-latest Docker уже установлен, поэтому Testcontainers
+  #    поднимает настоящий Redis без дополнительных настроек.
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check backend
+
+      - name: Tests (Testcontainers + real Redis)
+        working-directory: backend
+        run: python -m pytest -q
+
+      # Известные уязвимости в зафиксированных зависимостях (requirements*.txt).
+      # Падаем только на CRITICAL, для которых уже есть исправленная версия, —
+      # иначе пайплайн стоял бы из-за уязвимостей, которые пока нечем закрыть.
+      # Обновления версий приносит Dependabot (.github/dependabot.yml).
+      - name: Vulnerability scan (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  # ---------------------------------------------------------------------------
+  # 2. Сборка образов. Целевая машина — ARM (Oracle Ampere A1), поэтому
+  #    собираем под linux/amd64 И linux/arm64 (QEMU-эмуляция: сборка arm64
+  #    занимает заметно больше времени, чем amd64 — это нормально).
+  #    Пуш только на push в main; на PR образ просто собирается для проверки.
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+            file: ./backend/Dockerfile
+          # nginx собирается из КОРНЯ проекта: Dockerfile копирует static/
+          - name: nginx
+            context: .
+            file: ./nginx/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR не принимает заглавные буквы в имени образа, а логин на GitHub
+      # (например, NurbolotAlt) их содержит — приводим к нижнему регистру.
+      - name: Lowercase repository owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Тег = git SHA: по нему можно откатиться на конкретную версию
+      # (в отличие от плавающего latest). latest ставим для удобства.
+      - name: Build (and push on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/compute-${{ matrix.name }}:${{ github.sha }}
+            ghcr.io/${{ env.OWNER_LC }}/compute-${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # ---------------------------------------------------------------------------
+  # 3. Деплой: только push в main. Сервер ничего не собирает — он скачивает
+  #    готовые образы из GHCR (docker compose pull) и перезапускает контейнеры.
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    # Два деплоя одновременно не запускаем и уже идущий не прерываем
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lowercase repository owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Отпечаток сервера берём из секрета (ssh-keyscan -H <IP>), а не
+          # доверяем первому подключению вслепую — защита от подмены хоста.
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host oracle
+            HostName $SSH_HOST
+            User $SSH_USER
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+          EOF
+
+      - name: Upload compose file
+        run: |
+          ssh oracle 'mkdir -p ~/compute-service'
+          scp deploy/docker-compose.prod.yml oracle:~/compute-service/docker-compose.yml
+
+      - name: Pull images and restart
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          ssh oracle "cd ~/compute-service \
+            && export OWNER_LC='$OWNER_LC' IMAGE_TAG='$IMAGE_TAG' \
+            && docker compose pull \
+            && docker compose up -d --scale backend=2 --remove-orphans \
+            && docker image prune -f"
+
+      # Проверяем ИЗВНЕ, что весь путь работает: интернет -> nginx -> backend -> Redis.
+      # -k: сертификат self-signed. Повторы: контейнерам нужно время на старт.
+      - name: Smoke test
+        run: |
+          curl -fsk --retry 12 --retry-delay 5 --retry-connrefused \
+            "https://$SSH_HOST/api/health"
+
+# Откат: перезапусти деплой со старым SHA (см. DEPLOY-ORACLE.md, раздел "Откат").

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>compute-service</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>compute-service</h1>
+    <span id="ws-status" class="ws-status" data-state="connecting">подключение…</span>
+  </header>
+
+  <main class="layout">
+    <section class="card">
+      <h2>Новое вычисление</h2>
+      <form id="compute-form" class="form">
+        <label>
+          Задача
+          <select name="task" disabled>
+            <option value="fibonacci" selected>fibonacci (наивная рекурсия)</option>
+          </select>
+        </label>
+        <label>
+          N
+          <!-- max — только подсказка для пользователя; настоящий порог проверяет сервер -->
+          <input name="input" type="number" min="0" max="35" step="1" value="30" required>
+        </label>
+        <div class="actions">
+          <button type="submit">Посчитать</button>
+          <button type="button" id="cancel-btn" class="secondary" hidden>Отмена</button>
+        </div>
+      </form>
+
+      <div id="result" class="result" hidden></div>
+
+      <div class="instance">
+        <button id="instance-btn" type="button" class="secondary">Какая реплика отвечает?</button>
+        <code id="instance-info"></code>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Живая лента <small>у всех зрителей, с любой реплики</small></h2>
+      <ol id="feed" class="feed"></ol>
+      <p id="feed-empty" class="muted">Пока пусто — посчитайте что-нибудь.</p>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

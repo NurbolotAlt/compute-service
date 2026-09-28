@@ -1,0 +1,8 @@
+# Надстройка над docker-compose.yml только на время нагрузочного теста:
+#   docker compose -f docker-compose.yml -f loadtest/docker-compose.loadtest.yml up -d --scale backend=2
+# Вернуть обычный режим:
+#   docker compose up -d --scale backend=2
+services:
+  nginx:
+    volumes:
+      - ./loadtest/realip.conf:/etc/nginx/conf.d/realip.conf:ro

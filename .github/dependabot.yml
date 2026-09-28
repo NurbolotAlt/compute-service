@@ -1,0 +1,32 @@
+# Зафиксированные версии не обновляются сами — без Dependabot "замки" со временем
+# превращаются в набор устаревших пакетов с известными уязвимостями. Раз в неделю
+# Dependabot открывает PR с обновлениями, CI прогоняет на них тесты.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      backend:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev:
+        patterns: ["*"]
+
+  # Базовые образы в Dockerfile (python, nginx)
+  - package-ecosystem: docker
+    directories: ["/backend", "/nginx"]
+    schedule:
+      interval: weekly
+
+  # Версии экшенов в workflow
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

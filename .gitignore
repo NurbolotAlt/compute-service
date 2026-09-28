@@ -1,0 +1,29 @@
+# Секреты — никогда в git, в репозитории только .env.example
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Сертификаты генерируются при старте контейнера nginx, в репозитории их нет
+*.key
+*.crt
+*.pem
+
+# Рабочие инструкции для ИИ-ассистента и исходное ТЗ — не часть проекта
+SPEC.md
+CLAUDE.md
+.claude/

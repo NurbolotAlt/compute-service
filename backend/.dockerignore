@@ -1,0 +1,15 @@
+# В образ попадает только то, что нужно для запуска: код app/ и requirements.txt.
+# Секреты (.env) в слое образа остались бы навсегда — даже если удалить их позже,
+# они видны в истории слоёв любому, кто скачал образ.
+.env
+.env.*
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.git/
+tests/
+Dockerfile
+.dockerignore

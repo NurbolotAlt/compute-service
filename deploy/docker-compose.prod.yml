@@ -1,0 +1,87 @@
+# Production-compose. Пайплайн копирует его на сервер как
+# ~/compute-service/docker-compose.yml и запускает:
+#   OWNER_LC=<владелец> IMAGE_TAG=<git sha> \
+#   docker compose up -d --scale backend=2
+#
+# Отличия от локального docker-compose.yml:
+#   - image: вместо build: — сервер ничего не собирает, только скачивает
+#   - параметры нагрузки подобраны под Oracle Always Free (2 ядра ARM)
+#   - Redis и backend НЕ проброшены наружу: снаружи виден только nginx
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"   # без лимита JSON-логи со временем забивают диск
+    max-file: "3"
+
+services:
+  nginx:
+    image: ghcr.io/${OWNER_LC}/compute-nginx:${IMAGE_TAG:-latest}
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      backend:
+        # nginx сам перечитывает адреса реплик (resolve в upstream), но стартовать
+        # раньше backend всё равно незачем: первые запросы получили бы 502.
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # 127.0.0.1, а не localhost: в alpine localhost может резолвиться в ::1,
+      # а nginx слушает только IPv4. Путь /nginx-health доступен на порту 80.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  backend:
+    image: ghcr.io/${OWNER_LC}/compute-backend:${IMAGE_TAG:-latest}
+    # НЕТ container_name (он ломает --scale) и НЕТ ports: backend доступен
+    # только внутри Docker-сети по имени "backend". HEALTHCHECK описан
+    # в Dockerfile образа и наследуется отсюда.
+    expose:
+      - "8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      # Публичный сервис: потолок на N, чтобы один запрос не мог занять ядро
+      # на часы. Значение подбирай измерением на этой VM (duration_ms в логах).
+      MAX_FIBONACCI_N: ${MAX_FIBONACCI_N:-35}
+      # Правило ёмкости: реплики × WEB_CONCURRENCY × COMPUTE_POOL_SIZE ≈ число ядер.
+      # Oracle Always Free сейчас: 2 ядра -> 2 реплики × 1 воркер × пул 1 = 2.
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+      COMPUTE_POOL_SIZE: ${COMPUTE_POOL_SIZE:-1}
+      # Очередь ожидания в воркере: "считаются + ждут" ≤ BACKPRESSURE_FACTOR × пул.
+      # Правило: (factor − 1) × худшее вычисление < COMPUTE_QUEUE_WAIT_SECONDS.
+      # ARM медленнее локальной машины: 4 рассчитано на fib(35) до ~3 с. Замерь
+      # duration_ms в логах на VM и пересчитай (см. DEPLOY-ORACLE.md, шаг 7).
+      BACKPRESSURE_FACTOR: ${BACKPRESSURE_FACTOR:-4}
+      COMPUTE_QUEUE_WAIT_SECONDS: ${COMPUTE_QUEUE_WAIT_SECONDS:-10}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # Docker шлёт SIGTERM и ждёт stop_grace_period, потом SIGKILL. По умолчанию
+    # это 10 с — меньше gunicorn --graceful-timeout (30 с), и воркеры не успели
+    # бы доработать запросы. Ставим с запасом.
+    stop_grace_period: 40s
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    # Порт 6379 НЕ пробрасывается на хост: Redis без пароля, открытый в
+    # интернет, — классический способ получить взломанный сервер.
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
+volumes:
+  redis_data:

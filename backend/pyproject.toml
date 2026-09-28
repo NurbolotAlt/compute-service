@@ -1,0 +1,15 @@
+# Только настройки инструментов (pytest, ruff) — зависимости лежат в requirements*.txt,
+# на них опираются Dockerfile и CI.
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC"]
