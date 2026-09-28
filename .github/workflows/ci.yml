@@ -56,8 +56,11 @@ jobs:
       # Падаем только на CRITICAL, для которых уже есть исправленная версия, —
       # иначе пайплайн стоял бы из-за уязвимостей, которые пока нечем закрыть.
       # Обновления версий приносит Dependabot (.github/dependabot.yml).
+      # Закреплено по хэшу коммита, а не по тегу: тег можно перевесить на другой
+      # код, хэш — нет. Для экшена, которому доверяем проверку безопасности, это
+      # важно. Dependabot обновляет хэш вместе с комментарием-версией.
       - name: Vulnerability scan (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
