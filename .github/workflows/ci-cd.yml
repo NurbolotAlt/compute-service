@@ -136,7 +136,13 @@ jobs:
   # ---------------------------------------------------------------------------
   deploy:
     needs: build-and-push
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Деплой включается переменной репозитория DEPLOY_ENABLED=true (Settings ->
+    # Secrets and variables -> Actions -> Variables), когда сервер подготовлен по
+    # deploy/DEPLOY-ORACLE.md. До этого пайплайн гоняет тесты и сборку и остаётся
+    # зелёным, а не падает на SSH к несуществующему серверу.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
     # Два деплоя одновременно не запускаем и уже идущий не прерываем
