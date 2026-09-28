@@ -1,0 +1,100 @@
+# Что делает (на push в main и на pull request):
+#   ruff -> pytest с настоящим Redis (Testcontainers) -> проверка уязвимостей
+#   (Trivy) -> сборка образов backend и nginx
+#
+# Версии экшенов обновляет Dependabot (.github/dependabot.yml).
+#
+# requirements*.txt — "замки": точные версии всех пакетов с хэшами, собраны
+# pip-compile из requirements*.in. Поэтому CI и образ получают ровно те
+# версии, что прошли тесты, а подменённый пакет не установится (хэш не совпадёт).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Новый push в ту же ветку отменяет устаревший прогон: его результат уже не нужен.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Тесты. На ubuntu-latest Docker уже установлен, поэтому Testcontainers
+  #    поднимает настоящий Redis без дополнительных настроек.
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check backend
+
+      - name: Tests (Testcontainers + real Redis)
+        working-directory: backend
+        run: python -m pytest -q
+
+      # Известные уязвимости в зафиксированных зависимостях (requirements*.txt).
+      # Падаем только на CRITICAL, для которых уже есть исправленная версия, —
+      # иначе пайплайн стоял бы из-за уязвимостей, которые пока нечем закрыть.
+      # Обновления версий приносит Dependabot (.github/dependabot.yml).
+      - name: Vulnerability scan (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  # ---------------------------------------------------------------------------
+  # 2. Сборка образов: проверяем, что оба Dockerfile собираются (multi-stage,
+  #    non-root, хэши зависимостей). Образы никуда не публикуются — только сборка.
+  # ---------------------------------------------------------------------------
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+            file: ./backend/Dockerfile
+          # nginx собирается из КОРНЯ проекта: Dockerfile копирует static/
+          - name: nginx
+            context: .
+            file: ./nginx/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.name }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: false
+          tags: compute-${{ matrix.name }}:${{ github.sha }}
+          # Кэш слоёв между прогонами: без изменений requirements слой с
+          # зависимостями не пересобирается.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}

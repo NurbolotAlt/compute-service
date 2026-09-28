@@ -110,12 +110,12 @@ for i in 1 2 3 4 5; do curl -sk -o /dev/null -X POST https://localhost/api/compu
 docker compose logs --since 30s backend | grep '"input": 33' | grep -c '"compute_started"'
 ```
 
-## CI/CD и деплой
+## CI
 
-[GitHub Actions](.github/workflows/ci-cd.yml): ruff + pytest + проверка уязвимостей
-(Trivy) → сборка образов под amd64 и arm64 → push в GHCR → деплой по SSH на Oracle
-Cloud (ARM) → smoke test. Зависимости обновляет Dependabot. Подготовка сервера —
-[deploy/DEPLOY-ORACLE.md](deploy/DEPLOY-ORACLE.md).
+[GitHub Actions](.github/workflows/ci.yml) на каждый push и pull request: ruff →
+pytest с настоящим Redis → проверка уязвимостей в зависимостях (Trivy) → сборка
+образов backend и nginx. Зависимости, базовые образы и версии экшенов раз в неделю
+обновляет Dependabot.
 
 ## Структура
 
@@ -127,7 +127,6 @@ backend/tests/   интеграционные тесты (Testcontainers + Redis
 nginx/           nginx.conf, Dockerfile, генерация сертификата
 static/          фронтенд без фреймворков
 loadtest/        нагрузочный тест
-deploy/          production compose, инструкция по деплою
 docs/            подробная архитектура
 ```
 

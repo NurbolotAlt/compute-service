@@ -189,7 +189,7 @@ Uvicorn-воркеры лёгкие — в основном ждут Redis и р
 | Окружение | Реплики | WEB_CONCURRENCY | COMPUTE_POOL_SIZE | Итого |
 |---|---|---|---|---|
 | Локально, 4 ядра | 2 | 2 | 1 | 4 |
-| Oracle, 2 ядра | 2 | 1 | 1 | 2 |
+| Сервер, 2 ядра | 2 | 1 | 1 | 2 |
 
 ## Запуск
 
@@ -461,5 +461,5 @@ backend/
 nginx/                    nginx.conf, Dockerfile, generate-cert.sh
 static/                   index.html, style.css, app.js
 loadtest/                 нагрузочный тест (только для локальной проверки)
-deploy/                   ci-cd.yml, docker-compose.prod.yml, DEPLOY-ORACLE.md
+.github/workflows/ci.yml  CI: ruff, pytest, Trivy, сборка образов
 ```
