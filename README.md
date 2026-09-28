@@ -1,5 +1,7 @@
 # compute-service
 
+[![CI](https://github.com/NurbolotAlt/compute-service/actions/workflows/ci.yml/badge.svg)](https://github.com/NurbolotAlt/compute-service/actions/workflows/ci.yml)
+
 Распределённый сервис вычислений, который выдерживает **1000 одновременных клиентов**
 без единой ошибки: FastAPI за Nginx, несколько backend-реплик, Redis как кэш, rate
 limit, distributed lock и шина событий, живая лента результатов по WebSocket.
