@@ -57,7 +57,7 @@ jobs:
       # иначе пайплайн стоял бы из-за уязвимостей, которые пока нечем закрыть.
       # Обновления версий приносит Dependabot (.github/dependabot.yml).
       - name: Vulnerability scan (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
