@@ -5,7 +5,7 @@
 # Всё, что pip тянет при сборке (кэш, временные файлы, при необходимости
 # компиляторы), остаётся в этой стадии и в финальный образ не попадает.
 # ============================================================
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -21,7 +21,7 @@ RUN pip install -r requirements.txt
 # ============================================================
 # Стадия 2: runtime — только интерпретатор, готовый venv и код.
 # ============================================================
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # curl — только для HEALTHCHECK ниже.
 RUN apt-get update \
